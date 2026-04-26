@@ -53,24 +53,43 @@ os.environ["PATH"] = _ffmpeg_dir + os.pathsep + _current_path
 async def lifespan(app: FastAPI):
     """启动时初始化所有组件。"""
     settings = get_settings()
-    app.state.provider = get_provider(settings.LLM_PROVIDER)
     app.state.system_prompt = settings.SYSTEM_PROMPT
 
-    # 初始化记忆提取器（复用 Kimi API 配置）
-    app.state.memory_extractor = MemoryExtractor(
-        api_key=settings.KIMI_API_KEY or os.getenv("KIMI_API_KEY", ""),
-        base_url=settings.KIMI_BASE_URL,
-        model=settings.KIMI_MODEL,
-    )
+    # LLM Provider - 容错初始化，防止缺少环境变量导致服务起不来
+    try:
+        app.state.provider = get_provider(settings.LLM_PROVIDER)
+    except Exception as exc:
+        import logging
+        logging.warning(f"LLM Provider 初始化失败（可能缺少 KIMI_API_KEY）: {exc}")
+        app.state.provider = None
 
-    # 加载 Whisper 语音识别模型
-    import whisper
-    app.state.whisper_model = whisper.load_model("tiny")
+    # 初始化记忆提取器（复用 Kimi API 配置）
+    try:
+        app.state.memory_extractor = MemoryExtractor(
+            api_key=settings.KIMI_API_KEY or os.getenv("KIMI_API_KEY", ""),
+            base_url=settings.KIMI_BASE_URL,
+            model=settings.KIMI_MODEL,
+        )
+    except Exception as exc:
+        import logging
+        logging.warning(f"MemoryExtractor 初始化失败: {exc}")
+        app.state.memory_extractor = None
+
+    # Whisper 模型改为懒加载，避免启动时下载模型导致超时
+    app.state.whisper_model = None
     app.state.executor = ThreadPoolExecutor(max_workers=2)
 
     yield
 
     app.state.executor.shutdown(wait=False)
+
+
+def _ensure_whisper():
+    """懒加载 Whisper 模型（第一次调用 ASR 时才加载）。"""
+    if app.state.whisper_model is None:
+        import whisper
+        app.state.whisper_model = whisper.load_model("tiny")
+    return app.state.whisper_model
 
 
 app = FastAPI(
@@ -195,6 +214,11 @@ def _extract_memory_task(user_id: str, user_message: str):
 async def chat(req: ChatRequest, background_tasks: BackgroundTasks) -> ChatResponse:
     """接收老人消息，结合记忆返回小安的回复。"""
     provider = app.state.provider
+    if provider is None:
+        return ChatResponse(
+            reply="小安的连接还没配置好，请联系家人帮忙看看哦。",
+            success=False,
+        )
     profile = load_profile(req.user_id)
 
     # ---------- 天气查询检测 ----------
@@ -234,6 +258,12 @@ async def chat(req: ChatRequest, background_tasks: BackgroundTasks) -> ChatRespo
 async def proactive(req: ProactiveRequest | None = None) -> ProactiveResponse:
     """主动发起对话接口。"""
     provider = app.state.provider
+    if provider is None:
+        return ProactiveResponse(
+            greeting="小安的连接还没配置好，请联系家人帮忙看看哦。",
+            topic=req.topic if req else get_proactive_topic(),
+            success=False,
+        )
     user_id = req.user_id if req else "default"
     profile = load_profile(user_id)
     system_prompt = _build_system_prompt(app.state.system_prompt, profile)
@@ -289,12 +319,11 @@ async def asr(audio: UploadFile = File(...)) -> ASRResponse:
         tmp.write(content)
 
     try:
+        model = _ensure_whisper()
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(
             app.state.executor,
-            lambda: app.state.whisper_model.transcribe(
-                tmp_path, language="zh", fp16=False
-            ),
+            lambda: model.transcribe(tmp_path, language="zh", fp16=False),
         )
         text = result["text"].strip()
         return ASRResponse(text=text)
