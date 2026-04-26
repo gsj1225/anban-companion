@@ -1,0 +1,9 @@
+fastapi>=0.110.0
+uvicorn[standard]>=0.29.0
+openai>=1.30.0
+pydantic>=2.7.0
+edge-tts>=7.0.0
+openai-whisper
+imageio-ffmpeg>=0.5.0
+torch
+requests>=2.31.0
