@@ -823,7 +823,7 @@
     </div>
 
     <script>
-        const API_URL = 'http://localhost:8000/chat';
+        const API_URL = '/chat';
         let currentUserId = 'default';
 
         // ===================== 设置面板 =====================
@@ -934,7 +934,7 @@
                 </div>
             `;
             try {
-                const res = await fetch(`http://localhost:8000/chat-history/${currentUserId}`);
+                const res = await fetch(`/chat-history/${currentUserId}`);
                 const data = await res.json();
                 box.innerHTML = '';
                 if (data.messages && data.messages.length > 0) {
@@ -1155,7 +1155,7 @@
             formData.append('audio', blob, 'recording.webm');
 
             try {
-                const res = await fetch('http://localhost:8000/asr', {
+                const res = await fetch('/asr', {
                     method: 'POST',
                     body: formData
                 });
@@ -1229,7 +1229,7 @@
             updateQueueStatus();
 
             try {
-                const res = await fetch('http://localhost:8000/tts', {
+                const res = await fetch('/tts', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
